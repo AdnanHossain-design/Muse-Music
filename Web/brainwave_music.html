@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Brainwave Music Generator</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f6f7f9;--card:#fff;--text:#1a1d23;--muted:#667085;--line:#e3e6ec;--accent:#5b4bdb;--on-accent:#fff;--err:#c0392b}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12141a;--card:#1b1e27;--text:#eceef3;--muted:#98a0b3;--line:#2c3040;--accent:#8c7dff;--on-accent:#12141a;--err:#ff7b6b}}
+:root[data-theme="dark"]{--bg:#12141a;--card:#1b1e27;--text:#eceef3;--muted:#98a0b3;--line:#2c3040;--accent:#8c7dff;--on-accent:#12141a;--err:#ff7b6b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:26px;margin:0 0 2px}
+.sub{color:var(--muted);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+h2{font-size:15px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+#drop{border:2px dashed var(--line);border-radius:12px;padding:30px 16px;text-align:center;cursor:pointer;transition:.15s}
+#drop.over{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+#drop b{display:block;font-size:16px}
+#fname{color:var(--accent);font-weight:600;margin-top:6px;word-break:break-all}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:14px}
+select,button{font:inherit;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:9px 14px}
+button{cursor:pointer}
+button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600}
+button:disabled{opacity:.45;cursor:not-allowed}
+#status{margin-top:12px;color:var(--muted);min-height:22px}
+#status.err{color:var(--err)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.stat{border:1px solid var(--line);border-radius:10px;padding:10px}
+.stat span{display:block;color:var(--muted);font-size:12px}
+.stat b{font-size:20px}
+canvas{width:100%;height:150px;display:block;border:1px solid var(--line);border-radius:10px}
+.scroll{overflow:auto;max-height:260px;margin-top:12px;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:13px;min-width:520px}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{position:sticky;top:0;background:var(--card);color:var(--muted)}
+.file{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.file:last-child{border-bottom:0}
+.file small{color:var(--muted);display:block}
+.note{color:var(--muted);font-size:13px;margin-top:8px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<h1>Brainwave Music Generator</h1>
+<p class="sub">Muse EEG recording → Welch FFT → frequency/power pairs → MIDI → playback</p>
+
+<section class="card">
+  <h2>1 · Load a recording</h2>
+  <div id="drop"><b>Drag and drop a Mind Monitor CSV here</b>or click to choose a file<div id="fname"></div></div>
+  <input id="pick" type="file" accept=".csv,text/csv" hidden>
+  <div class="row">
+    <label for="chan">EEG channel</label>
+    <select id="chan">
+      <option value="RAW_TP9">TP9 (left ear)</option>
+      <option value="RAW_AF7">AF7 (left forehead)</option>
+      <option value="RAW_AF8">AF8 (right forehead)</option>
+      <option value="RAW_TP10">TP10 (right ear)</option>
+    </select>
+    <button id="go" class="primary" disabled>Generate music</button>
+  </div>
+  <div id="status">Waiting for a file.</div>
+  <div class="note">Everything runs in your browser. The file isn’t uploaded anywhere.</div>
+</section>
+
+<section class="card" id="results" hidden>
+  <h2>2 · Signal processing</h2>
+  <div class="stats">
+    <div class="stat"><span>CSV rows</span><b id="sRows">0</b></div>
+    <div class="stat"><span>Raw EEG samples</span><b id="sSamp">0</b></div>
+    <div class="stat"><span>2 s windows</span><b id="sWin">0</b></div>
+    <div class="stat"><span>Music length</span><b id="sLen">0 s</b></div>
+  </div>
+  <h2 style="margin-top:18px">3 · Notes (pitch over time)</h2>
+  <canvas id="roll"></canvas>
+  <div class="scroll"><table>
+    <thead><tr><th>#</th><th>Time</th><th>Strongest frequency / power pairs</th><th>Chord</th></tr></thead>
+    <tbody id="tbody"></tbody>
+  </table></div>
+</section>
+
+<section class="card" id="filesCard" hidden>
+  <h2>4 · Generated MIDI files</h2>
+  <div id="files"></div>
+</section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const SR = 256, N = 512, MIN_HZ = 1, MAX_HZ = 30, PEAKS = 3, RES = SR / N;
+const HANN = Array.from({length: N}, (_, i) => 0.5 * (1 - Math.cos(2 * Math.PI * i / (N - 1))));
+const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const noteName = m => NAMES[m % 12] + (Math.floor(m / 12) - 1);
+
+let file = null, entries = [], playingId = null, ac = null, voices = [], endTimer = null;
+
+/* ---------- FFT / spectrum ---------- */
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2;
+        const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+function spectrum(seg) {
+  const mean = seg.reduce((s, v) => s + v, 0) / seg.length;
+  const re = new Float64Array(N), im = new Float64Array(N);
+  for (let i = 0; i < N; i++) re[i] = (seg[i] - mean) * HANN[i];
+  fft(re, im);
+  const psd = [];
+  for (let k = 0; k < N / 2; k++) psd.push(re[k] * re[k] + im[k] * im[k]);
+  return psd;
+}
+function topPeaks(psd) {
+  const lo = Math.ceil(MIN_HZ / RES), hi = Math.floor(MAX_HZ / RES), peaks = [];
+  for (let k = lo; k <= hi; k++) if (psd[k] > psd[k - 1] && psd[k] >= psd[k + 1]) peaks.push([k * RES, psd[k]]);
+  return peaks.sort((a, b) => b[1] - a[1]).slice(0, PEAKS);
+}
+const freqToPitch = f => Math.round(48 + 36 * Math.log(f / MIN_HZ) / Math.log(MAX_HZ / MIN_HZ));
+
+/* ---------- CSV ---------- */
+function parseCsv(text, channel) {
+  const lines = text.split("\n");
+  const head = lines[0].replace("\r", "").split(",");
+  const idx = head.indexOf(channel);
+  if (idx < 0) throw new Error("This doesn’t look like a Mind Monitor export (no " + channel + " column).");
+  const data = [];
+  for (let i = 1; i < lines.length; i++) {
+    const v = lines[i].split(",")[idx];
+    if (v !== undefined && v !== "" && !isNaN(v)) data.push(parseFloat(v));
+  }
+  return { rows: lines.length - 1, data };
+}
+
+/* ---------- MIDI write / read ---------- */
+const vlq = v => { const b = [v & 127]; while (v >>= 7) b.unshift((v & 127) | 128); return b; };
+function buildMidi(chords) {
+  const t = [0, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20];
+  chords.forEach(c => {
+    c.pitches.forEach(p => t.push(0, 0x90, p, c.vel));
+    c.pitches.forEach((p, i) => t.push(...vlq(i === 0 ? 480 : 0), 0x80, p, 0));
+  });
+  t.push(0, 0xFF, 0x2F, 0);
+  const hdr = [0x4D,0x54,0x68,0x64, 0,0,0,6, 0,0, 0,1, 0x01,0xE0];
+  const n = t.length;
+  return new Uint8Array([...hdr, 0x4D,0x54,0x72,0x6B, n >>> 24, (n >> 16) & 255, (n >> 8) & 255, n & 255, ...t]);
+}
+function readMidi(b) {
+  const div = (b[12] << 8) | b[13];
+  let p = 22, tempo = 500000, ticks = 0;
+  const open = {}, notes = [];
+  const vl = () => { let v = 0, c; do { c = b[p++]; v = (v << 7) | (c & 127); } while (c & 128); return v; };
+  while (p < b.length) {
+    ticks += vl();
+    const s = b[p++];
+    if (s === 0xFF) {
+      const ty = b[p++], l = vl();
+      if (ty === 0x51) tempo = (b[p] << 16) | (b[p + 1] << 8) | b[p + 2];
+      p += l;
+      if (ty === 0x2F) break;
+    } else if ((s & 0xF0) === 0x90 || (s & 0xF0) === 0x80) {
+      const n = b[p++], v = b[p++], t = ticks / div * tempo / 1e6;
+      if ((s & 0xF0) === 0x90 && v > 0) open[n] = { t, v };
+      else if (open[n]) { notes.push({ midi: n, time: open[n].t, dur: t - open[n].t, vel: open[n].v / 127 }); delete open[n]; }
+    } else break;
+  }
+  return notes;
+}
+
+/* ---------- Audio ---------- */
+function getAc() {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === "suspended") ac.resume();
+  return ac;
+}
+function stopAudio() {
+  voices.forEach(o => { try { o.stop(); } catch (e) {} });
+  voices = []; clearTimeout(endTimer); playingId = null; renderFiles();
+}
+function play(entry) {
+  stopAudio();
+  const a = getAc(), t0 = a.currentTime + 0.1;
+  let end = 0;
+  entry.notes.forEach(n => {
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = "triangle"; o.frequency.value = 440 * Math.pow(2, (n.midi - 69) / 12);
+    const s = t0 + n.time, e = s + n.dur;
+    g.gain.setValueAtTime(0, s);
+    g.gain.linearRampToValueAtTime(0.18 * n.vel, s + 0.02);
+    g.gain.setTargetAtTime(0, e - 0.08, 0.04);
+    o.connect(g).connect(a.destination);
+    o.start(s); o.stop(e + 0.3);
+    voices.push(o); end = Math.max(end, e - t0);
+  });
+  playingId = entry.id; renderFiles();
+  endTimer = setTimeout(stopAudio, (end + 0.6) * 1000);
+}
+
+/* ---------- UI ---------- */
+function setStatus(msg, err) { const s = $("status"); s.textContent = msg; s.className = err ? "err" : ""; }
+function setFile(f) {
+  if (!f) return;
+  file = f; $("fname").textContent = f.name; $("go").disabled = false; setStatus("Ready. Press “Generate music”.");
+}
+const drop = $("drop");
+drop.onclick = () => $("pick").click();
+$("pick").onchange = e => setFile(e.target.files[0]);
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => setFile(e.dataTransfer.files[0]));
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+
+function drawRoll(chords) {
+  const c = $("roll"), dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext("2d"); g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement);
+  const col = css.getPropertyValue("--accent").trim(), line = css.getPropertyValue("--line").trim();
+  g.strokeStyle = line;
+  for (let i = 0; i <= 4; i++) { const y = h * i / 4; g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+  const cw = w / chords.length;
+  chords.forEach((ch, i) => ch.pitches.forEach(p => {
+    const y = h - (p - 46) / 40 * h;
+    g.globalAlpha = 0.35 + 0.65 * (ch.vel - 30) / 70; g.fillStyle = col;
+    g.fillRect(i * cw + 1, y - 4, Math.max(cw - 2, 2), 8);
+  }));
+  g.globalAlpha = 1;
+}
+function renderFiles() {
+  const box = $("files"); box.innerHTML = "";
+  entries.forEach(en => {
+    const d = document.createElement("div"); d.className = "file";
+    const info = document.createElement("div");
+    const nm = document.createElement("b"); nm.textContent = en.name;
+    const sm = document.createElement("small"); sm.textContent = en.notes.length + " notes · " + en.bytes + " bytes · " + en.dur.toFixed(1) + " s";
+    info.append(nm, sm);
+    const btn = document.createElement("button");
+    const on = playingId === en.id;
+    btn.textContent = on ? "■ Stop" : "▶ Play"; if (!on) btn.className = "primary";
+    btn.onclick = () => on ? stopAudio() : play(en);
+    d.append(info, btn); box.append(d);
+  });
+}
+
+$("go").onclick = async () => {
+  getAc(); // unlock audio inside the click gesture
+  const channel = $("chan").value;
+  try {
+    setStatus("Reading file…");
+    const { rows, data } = parseCsv(await file.text(), channel);
+    if (data.length < N) throw new Error("Only " + data.length + " raw samples found. Record with “Constant Sampling” turned on in Mind Monitor.");
+
+    const windows = [];
+    for (let i = 0; i + N <= data.length; i += N) windows.push(topPeaks(spectrum(data.slice(i, i + N))));
+    const used = windows.filter(w => w.length);
+    const lp = used.map(w => Math.log10(w[0][1]));
+    const mn = Math.min(...lp), mx = Math.max(...lp);
+    const chords = used.map((w, i) => ({
+      pitches: [...new Set(w.map(([f]) => freqToPitch(f)))],
+      vel: Math.round(30 + 70 * (mx > mn ? (lp[i] - mn) / (mx - mn) : 0.5))
+    }));
+    if (!chords.length) throw new Error("No usable frequency peaks found in this recording.");
+
+    const bytes = buildMidi(chords);
+    const notes = readMidi(bytes);
+    const dur = Math.max(...notes.map(n => n.time + n.dur));
+    const base = file.name.replace(/\.csv$/i, "") + (channel === "RAW_TP9" ? "" : "_" + channel.slice(4));
+    const entry = { id: Date.now(), name: base + ".mid", notes, bytes: bytes.length, dur };
+    entries.unshift(entry);
+
+    $("results").hidden = false; $("filesCard").hidden = false;
+    $("sRows").textContent = rows.toLocaleString(); $("sSamp").textContent = data.length.toLocaleString();
+    $("sWin").textContent = windows.length; $("sLen").textContent = dur.toFixed(1) + " s";
+    $("tbody").innerHTML = windows.map((w, i) =>
+      "<tr><td>" + (i + 1) + "</td><td>" + (i * 2) + " s</td><td>" +
+      (w.length ? w.map(([f, p]) => f.toFixed(1) + " Hz / " + p.toExponential(1)).join(" · ") : "—") + "</td><td>" +
+      (w.length ? [...new Set(w.map(([f]) => freqToPitch(f)))].sort((a, b) => a - b).map(noteName).join(" ") : "—") + "</td></tr>"
+    ).join("");
+    drawRoll(chords);
+    setStatus("Done. Playing " + entry.name + "…");
+    play(entry);
+  } catch (e) {
+    setStatus(e.message || "Something went wrong reading that file.", true);
+  }
+};
+</script>
+</body>
+</html>

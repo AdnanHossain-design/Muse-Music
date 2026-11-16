@@ -1,0 +1,7 @@
+node_modules/
+midi_output/
+playback.wav
+test.mid
+*.zip
+.DS_Store
+__pycache__/
